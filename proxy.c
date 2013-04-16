@@ -1,4 +1,5 @@
-#define _GNU_SOURCE
+#include "proxy.h"
+
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
@@ -12,7 +13,7 @@
 #include <netinet/in.h>
 #include <netdb.h>
 
-#include "http.h"
+#include "http_parser.h"
 
 #define UNUSED __attribute__((unused))
 
@@ -110,7 +111,7 @@ static void http_field(void *data, const char *field, size_t flen, const char *v
 }
 /* }}} */
 
-static void read_request(int fd)
+void read_request(int fd)
 {
     struct http_data data = {
     };
@@ -168,69 +169,4 @@ static void read_request(int fd)
     }
 
     close(pfd);
-}
-
-static int accept_conn(int fd)
-{
-    union {
-        struct sockaddr sa;
-        struct sockaddr_in in;
-    } sa;
-    socklen_t sa_len = sizeof(sa);
-
-    /* int cfd = accept4(fd, &sa.sa, &sa_len, SOCK_CLOEXEC); */
-    int cfd = accept(fd, &sa.sa, &sa_len);
-    if (cfd < 0)
-        err(EXIT_FAILURE, "failed to accept connection");
-
-    return cfd;
-}
-
-static inline int reuseaddr(int fd, int val)
-{
-    return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
-}
-
-static int get_socket(uint16_t port)
-{
-    union {
-        struct sockaddr sa;
-        struct sockaddr_in in;
-    } sa;
-
-    int fd = socket(AF_INET, SOCK_STREAM | SOCK_CLOEXEC, 0);
-    if (fd < 0)
-        err(EXIT_FAILURE, "couldn't create socket");
-
-    reuseaddr(fd, 1);
-
-    sa.in = (struct sockaddr_in){
-        .sin_family = AF_INET,
-        .sin_port = htons(port),
-        .sin_addr.s_addr = INADDR_ANY
-    };
-
-    if (bind(fd, &sa.sa, sizeof(sa)) < 0)
-        err(EXIT_FAILURE, "failed to bind");
-
-    if (listen(fd, SOMAXCONN) < 0)
-        err(EXIT_FAILURE, "failed to listen");
-
-    return fd;
-}
-
-int main(void)
-{
-    int sfd = get_socket(8080);
-
-    while (true) {
-        int cfd = accept_conn(sfd);
-
-        printf("accepted connection %d\n", cfd);
-        read_request(cfd);
-        close(cfd);
-    }
-
-    close(sfd);
-    return 0;
 }
