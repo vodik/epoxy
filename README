@@ -1,0 +1,14 @@
+work in progess pacman proxy
+
+## Usage
+
+    export http_proxy=localhost:8080
+    pacman -Syu
+
+## Differences between [pacserve]
+
+- This proxy doesn't require a modified pacman.conf, just that
+  `http_proxy` is set
+- This proxy should play nicely with systemd: be fully socket activated
+  and only run when necessary (and if there's no traffic, shut itself
+  down).
