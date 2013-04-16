@@ -12,3 +12,5 @@ work in progess pacman proxy
 - This proxy should play nicely with systemd: be fully socket activated
   and only run when necessary (and if there's no traffic, shut itself
   down).
+
+  [pacserve]: http://xyne.archlinux.ca/projects/pacserve/
