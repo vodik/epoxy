@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
+#include <errno.h>
 #include <err.h>
 
 #include <sys/types.h>
@@ -151,20 +152,30 @@ void read_request(int fd)
     int pfd = data.fd;
     int iovcnt = data.v - data.iov;
 
+    if (pfd <= 0)
+        errx(EXIT_FAILURE, "no connection?");
+
     printf("SENDING: ");
     fflush(stdout);
     writev(STDOUT_FILENO, data.iov, iovcnt);
 
     writev(pfd, data.iov, iovcnt);
+    shutdown(pfd, SHUT_WR);
 
     printf("\nRECIEVING: ");
     fflush(stdout);
     while (true) {
         int ret = read(pfd, buf, BUFSIZ);
-        if (ret <= 0)
+        if (ret < 0) {
+            err(EXIT_FAILURE, "read from proxy failed");
+        } else if (ret == 0) {
+            printf("DONE!\n");
             break;
-        buf[ret] = 0;
+        }
+
+        buf[ret] = '\0';
         printf("%s", buf);
+
         write(fd, buf, ret);
     }
 

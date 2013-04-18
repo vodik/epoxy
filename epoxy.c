@@ -3,6 +3,7 @@
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <err.h>
 
 #include <sys/types.h>
@@ -14,9 +15,9 @@
 
 #include "proxy.h"
 
-static inline int reuseaddr(int fd, int val)
+static inline int sock_reuseaddr(int sock, int val)
 {
-    return setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
+    return setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
 }
 
 static int start_server(uint16_t port)
@@ -39,7 +40,7 @@ static int start_server(uint16_t port)
         if (fd < 0)
             err(EXIT_FAILURE, "couldn't create socket");
 
-        reuseaddr(fd, 1);
+        sock_reuseaddr(fd, 1);
 
         sa.in = (struct sockaddr_in){
             .sin_family = AF_INET,
