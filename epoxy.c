@@ -20,6 +20,12 @@ static inline int sock_reuseaddr(int sock, int val)
     return setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
 }
 
+static inline int sock_nonblock(int sock)
+{
+    int flags = fcntl(sock, F_GETFL, 0);
+    return flags < 0 ? flags : fcntl(sock, F_SETFL, flags | O_NONBLOCK);
+}
+
 static int start_server(uint16_t port)
 {
     int fd, n;
@@ -70,6 +76,9 @@ static int accept_conn(int fd)
     int cfd = accept(fd, &sa.sa, &sa_len);
     if (cfd < 0)
         err(EXIT_FAILURE, "failed to accept connection");
+
+    /* if (sock_nonblock(cfd) < 0) */
+    /*     err(EXIT_FAILURE, "failed to set nonblocking"); */
 
     return cfd;
 }

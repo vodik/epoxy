@@ -7,6 +7,7 @@
 #include <unistd.h>
 #include <errno.h>
 #include <err.h>
+#include <assert.h>
 
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -80,7 +81,7 @@ static void http_request_uri(void *data, const char *at, size_t len)
     *header->v++ = (struct iovec){ "/ ",  2 };
 
     header->hostname = strndup(at + 2, len - 3); /** -3 to avoid the / */
-    header->fd = load_proxy(header->hostname, "80");
+    header->fd = load_proxy(header->hostname, "http");
     /* TODO: store the lenght to avoid the strlen */
 
     header->path = strndup(at, len);
@@ -115,6 +116,7 @@ static void http_field(void *data, const char *field, size_t flen, const char *v
 void read_request(int fd)
 {
     struct http_data data = {
+        .hostname = NULL,
     };
 
     struct http_callbacks callbacks = {
@@ -124,59 +126,50 @@ void read_request(int fd)
         .request_uri    = http_request_uri,
         .http_version   = http_version,
         .http_field     = http_field,
-        /* .header_done; */
     };
 
+    char buf[BUFSIZ];
+    ssize_t bytes_r;
+
+    data.v = data.iov;
     http_parser_init(&parser);
 
-    char buf[BUFSIZ];
-    ssize_t bytes_r = read(fd, buf, BUFSIZ);
-    buf[bytes_r] = 0;
-    printf("HEADER: %s", buf);
-
-    /* int pfd = load_proxy(data.hostname, "80"); */
-    data.v = data.iov;
-
+    /* TODO: should be a loop */
+    bytes_r = read(fd, buf, BUFSIZ);
     http_parser_execute(&parser, buf, bytes_r, &callbacks);
+    assert(http_parser_is_finished(&parser) && "http header was too big?");
 
-    printf("-----------------\n");
-    printf("Path = %s\n", data.path);
+    /* printf("-----------------\n"); */
+    /* printf("Path = %s\n", data.path); */
     /* printf("User-Agent = %s\n", data.useragent); */
     /* printf("Host = %s\n", data.host); */
     /* printf("Accept = %s\n", data.accept); */
-    printf("If-Modified-Since = %s\n", data.modified);
-    printf("-----------------\n\n");
+    /* printf("If-Modified-Since = %s\n", data.modified); */
+    /* printf("-----------------\n\n"); */
 
-    /* write(pfd, buf, bytes_r); */
     *data.v++ = iov_crlf;
-    int pfd = data.fd;
-    int iovcnt = data.v - data.iov;
 
+    int pfd = data.fd;
     if (pfd <= 0)
-        errx(EXIT_FAILURE, "no connection?");
+        errx(EXIT_FAILURE, "no proxy socket");
+    int iovcnt = data.v - data.iov;
 
     printf("SENDING: ");
     fflush(stdout);
     writev(STDOUT_FILENO, data.iov, iovcnt);
 
+    /* write out header */
     writev(pfd, data.iov, iovcnt);
     shutdown(pfd, SHUT_WR);
 
-    printf("\nRECIEVING: ");
-    fflush(stdout);
     while (true) {
-        int ret = read(pfd, buf, BUFSIZ);
-        if (ret < 0) {
-            err(EXIT_FAILURE, "read from proxy failed");
-        } else if (ret == 0) {
-            printf("DONE!\n");
+        bytes_r = recv(pfd, buf, BUFSIZ, 0);
+        if (bytes_r == 0)
             break;
-        }
+        else if (bytes_r < 0)
+            err(EXIT_FAILURE, "read from proxy failed");
 
-        buf[ret] = '\0';
-        printf("%s", buf);
-
-        write(fd, buf, ret);
+        write(fd, buf, bytes_r);
     }
 
     close(pfd);
