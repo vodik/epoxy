@@ -35,29 +35,44 @@ static struct http_parser parser;
 static const struct iovec iov_host  = { "Host: ", strlen("Host: ") };
 static const struct iovec iov_crlf  = { "\r\n",   2 };
 
+/* XXX: needs a better name */
+static inline void add_write(struct http_data *data, const char *field, size_t len)
+{
+    *data->v++ = (struct iovec){ (void *)field,  len };
+}
+
 static void http_request_method(void *data, const char *at, size_t len)
 {
     struct http_data *header = data;
-    *header->v++ = (struct iovec){ (void *)at,  len + 1 };
+    add_write(header, at, len + 1);
 }
 
 static void http_request_uri(void *data, const char *at, size_t len)
 {
     struct http_data *header = data;
+
     /* *header->v++ = (struct iovec){ (void *)at + 2,  len - 2 + 1 }; */
-    *header->v++ = (struct iovec){ "/ ",  2 };
+    add_write(header, "/ ", 2);
 
-    header->hostname = strndup(at + 2, len - 3); /** -3 to avoid the / */
-    header->fd = connect_to(header->hostname, "http");
-    /* TODO: store the lenght to avoid the strlen */
+    if (true) { /* if (is_uri) { */
+        header->hostname = strndup(at + 2, len - 3); /** -3 to avoid the /, parser broken? */
+        header->fd = connect_to(header->hostname, "http");
 
-    header->path = strndup(at, len);
+        /* TODO: store the lenght to avoid the strlen later */
+        header->path = strndup(at, len);
+
+        /* TODO: check if uri or path, this should affect below */
+        /* header->http_version = http_version; */
+        /* header->http_field   = http_field; */
+    }
 }
 
 static void http_version(void *data, const char *at, size_t len)
 {
+    /* XXX: do we really need to pass this on verbatum? Lets just
+     * automatically upgrade to HTTP 1.1 */
     struct http_data *header = data;
-    *header->v++ = (struct iovec){ (void *)at,  len + 2 };
+    add_write(header, at, len + 2);
 }
 
 static void http_field(void *data, const char *field, size_t flen, const char *value, size_t vlen)
@@ -66,7 +81,7 @@ static void http_field(void *data, const char *field, size_t flen, const char *v
 
     if (strncmp("Host", field, flen) == 0) {
         *header->v++ = iov_host;
-        *header->v++ = (struct iovec){ (void *)header->hostname, strlen(header->hostname) };
+        add_write(header, header->hostname, strlen(header->hostname));
         *header->v++ = iov_crlf;
         return;
     } else if (strncmp("If-Modified-Since", field, flen) == 0) {
@@ -75,8 +90,8 @@ static void http_field(void *data, const char *field, size_t flen, const char *v
         return;
     }
 
-    *header->v++ = (struct iovec){ (void *)field, flen + 2 };
-    *header->v++ = (struct iovec){ (void *)value, vlen + 2 };
+    add_write(header, field, flen + 2);
+    add_write(header, value, vlen + 2);
 }
 /* }}} */
 
@@ -109,7 +124,7 @@ void read_request(int client_fd)
         .request_method = http_request_method,
         .request_uri    = http_request_uri,
         .http_version   = http_version,
-        .http_field     = http_field,
+        .http_field     = http_field
     };
 
     char buf[BUFSIZ];
