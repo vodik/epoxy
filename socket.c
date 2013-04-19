@@ -3,6 +3,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <stdbool.h>
+#include <unistd.h>
 #include <fcntl.h>
 #include <errno.h>
 #include <err.h>
@@ -111,4 +112,23 @@ int accept_connection(int fd)
     /*     err(EXIT_FAILURE, "failed to set nonblocking"); */
 
     return cfd;
+}
+
+void copydata(int in_fd, int out_fd)
+{
+    char buf[BUFSIZ];
+    ssize_t bytes_r;
+
+    while (true) {
+        bytes_r = read(in_fd, buf, BUFSIZ);
+        if (bytes_r == 0) {
+            break;
+        } else if (bytes_r < 0) {
+            if (errno == EAGAIN || errno == EINTR)
+                continue;
+            err(EXIT_FAILURE, "copy between fds failed");
+        }
+
+        write(out_fd, buf, bytes_r);
+    }
 }

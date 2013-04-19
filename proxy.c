@@ -95,23 +95,6 @@ static void http_field(void *data, const char *field, size_t flen, const char *v
 }
 /* }}} */
 
-/* XXX: handle EAGAIN / EINTR places */
-static inline void copydata(int in_fd, int out_fd)
-{
-    char buf[BUFSIZ];
-    ssize_t bytes_r;
-
-    while (true) {
-        bytes_r = read(in_fd, buf, BUFSIZ);
-        if (bytes_r == 0)
-            break;
-        else if (bytes_r < 0)
-            err(EXIT_FAILURE, "copy between fds failed");
-
-        write(out_fd, buf, bytes_r);
-    }
-}
-
 void read_request(int client_fd)
 {
     struct http_data data = {
