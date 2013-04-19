@@ -130,6 +130,13 @@ static void http_field(void *data, const char *field, size_t flen, const char *v
     add_write(header, field, flen + 2);
     add_write(header, value, vlen + 2);
 }
+
+/* TODO: this doesn't need any arguments */
+static void http_request_done(void *data, const char UNUSED *at, size_t UNUSED len)
+{
+    struct http_data *header = data;
+    *header->p.v++ = iov_crlf;
+}
 /* }}} */
 
 static void handle_proxy_request(struct proxy_request *request, int client_fd)
@@ -164,7 +171,8 @@ void handle_request(int client_fd)
         .request_method = http_request_method,
         .request_uri    = http_request_uri,
         .http_version   = http_version,
-        .http_field     = http_field
+        .http_field     = http_field,
+        .header_done    = http_request_done
     };
 
     char buf[BUFSIZ];
@@ -184,9 +192,6 @@ void handle_request(int client_fd)
     /* printf("Accept = %s\n", data.accept); */
     /* printf("If-Modified-Since = %s\n", data.modified); */
     /* printf("-----------------\n\n"); */
-
-    /* TODO: move into 'on finished' handler */
-    *data.p.v++ = iov_crlf;
 
     switch (data.request_type) {
     case REQUEST_URI:
