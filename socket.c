@@ -8,6 +8,8 @@
 #include <errno.h>
 #include <err.h>
 
+#include <sys/stat.h>
+#include <sys/sendfile.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
@@ -112,6 +114,23 @@ int accept_connection(int fd)
     /*     err(EXIT_FAILURE, "failed to set nonblocking"); */
 
     return cfd;
+}
+
+void copyfile(const char *filename, int out_fd)
+{
+    struct stat st;
+    int ret;
+
+    int fd = open(filename, O_RDONLY);
+    if (fd < 0)
+        err(EXIT_FAILURE, "couldn't access %s", filename);
+
+    fstat(fd, &st);
+    ret = sendfile(out_fd, fd, 0, st.st_size);
+    if (ret < 0)
+        err(EXIT_FAILURE, "failed to send file %s across socket", filename);
+
+    close(fd);
 }
 
 void copydata(int in_fd, int out_fd)
