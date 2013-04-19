@@ -14,7 +14,7 @@ int main(void)
         int cfd = accept_connection(server_fd);
 
         printf("accepted connection %d\n", cfd);
-        read_request(cfd);
+        handle_request(cfd);
         close(cfd);
     }
 
