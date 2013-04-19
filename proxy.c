@@ -12,10 +12,9 @@
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
-#include <netinet/in.h>
-#include <netdb.h>
 
 #include "http_parser.h"
+#include "socket.h"
 
 #define UNUSED __attribute__((unused))
 
@@ -31,38 +30,6 @@ struct http_data {
 };
 
 static struct http_parser parser;
-
-static int load_proxy(const char *hostname, const char *service)
-{
-    struct addrinfo *results, *rp;
-    struct addrinfo hints = {
-        .ai_family = AF_UNSPEC,
-        .ai_socktype = SOCK_STREAM,
-        .ai_flags = AI_CANONNAME
-    };
-
-    int err = getaddrinfo(hostname, service, &hints, &results);
-    if (err != 0) {
-        printf("error %d: %s\n", err, gai_strerror(err));
-        return 1;
-    }
-
-    int fd;
-    for (rp = results; rp != NULL; rp = rp->ai_next) {
-        fd = socket(rp->ai_family, rp->ai_socktype | SOCK_CLOEXEC, rp->ai_protocol);
-        if (fd < 0)
-            continue;
-
-        if (connect(fd, rp->ai_addr, rp->ai_addrlen) != -1)
-            break;
-    }
-
-    if (rp == NULL)
-        errx(EXIT_FAILURE, "could not establish connection");
-
-    freeaddrinfo(results);
-    return fd;
-}
 
 /* {{{ CALLBACKS */
 static const struct iovec iov_host  = { "Host: ", strlen("Host: ") };
@@ -81,7 +48,7 @@ static void http_request_uri(void *data, const char *at, size_t len)
     *header->v++ = (struct iovec){ "/ ",  2 };
 
     header->hostname = strndup(at + 2, len - 3); /** -3 to avoid the / */
-    header->fd = load_proxy(header->hostname, "http");
+    header->fd = connect_to(header->hostname, "http");
     /* TODO: store the lenght to avoid the strlen */
 
     header->path = strndup(at, len);
@@ -113,7 +80,24 @@ static void http_field(void *data, const char *field, size_t flen, const char *v
 }
 /* }}} */
 
-void read_request(int fd)
+/* XXX: handle EAGAIN / EINTR places */
+static inline void copydata(int in_fd, int out_fd)
+{
+    char buf[BUFSIZ];
+    ssize_t bytes_r;
+
+    while (true) {
+        bytes_r = read(in_fd, buf, BUFSIZ);
+        if (bytes_r == 0)
+            break;
+        else if (bytes_r < 0)
+            err(EXIT_FAILURE, "copy between fds failed");
+
+        write(out_fd, buf, bytes_r);
+    }
+}
+
+void read_request(int client_fd)
 {
     struct http_data data = {
         .hostname = NULL,
@@ -135,7 +119,7 @@ void read_request(int fd)
     http_parser_init(&parser);
 
     /* TODO: should be a loop */
-    bytes_r = read(fd, buf, BUFSIZ);
+    bytes_r = read(client_fd, buf, BUFSIZ);
     http_parser_execute(&parser, buf, bytes_r, &callbacks);
     assert(http_parser_is_finished(&parser) && "http header was too big?");
 
@@ -149,8 +133,8 @@ void read_request(int fd)
 
     *data.v++ = iov_crlf;
 
-    int pfd = data.fd;
-    if (pfd <= 0)
+    int target_fd = data.fd;
+    if (target_fd <= 0)
         errx(EXIT_FAILURE, "no proxy socket");
     int iovcnt = data.v - data.iov;
 
@@ -159,18 +143,9 @@ void read_request(int fd)
     writev(STDOUT_FILENO, data.iov, iovcnt);
 
     /* write out header */
-    writev(pfd, data.iov, iovcnt);
-    shutdown(pfd, SHUT_WR);
+    writev(target_fd, data.iov, iovcnt);
+    shutdown(target_fd, SHUT_WR);
+    copydata(target_fd, client_fd);
 
-    while (true) {
-        bytes_r = recv(pfd, buf, BUFSIZ, 0);
-        if (bytes_r == 0)
-            break;
-        else if (bytes_r < 0)
-            err(EXIT_FAILURE, "read from proxy failed");
-
-        write(fd, buf, bytes_r);
-    }
-
-    close(pfd);
+    close(target_fd);
 }
