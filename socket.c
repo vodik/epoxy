@@ -126,7 +126,7 @@ void copyfile(const char *filename, int out_fd)
         err(EXIT_FAILURE, "couldn't access %s", filename);
 
     fstat(fd, &st);
-    ret = sendfile(out_fd, fd, 0, st.st_size);
+    ret = sendfile(out_fd, fd, NULL, st.st_size);
     if (ret < 0)
         err(EXIT_FAILURE, "failed to send file %s across socket", filename);
 
