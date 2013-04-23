@@ -13,7 +13,7 @@ epoxy: epoxy.o proxy.o socket.o http_parser.o
 	${CC} ${LDFLAGS} -o $@ $^ ${LDLIBS}
 
 http_parser.c: http_parser.rl
-	ragel -C $< -o $@
+	ragel -G2 -C $< -o $@
 
 install: epoxy
 	install -Dm755 epoxy ${DESTDIR}/usr/bin/epoxy

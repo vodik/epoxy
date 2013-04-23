@@ -5,10 +5,14 @@
 #include <stdbool.h>
 #include <string.h>
 #include <unistd.h>
+#include <fcntl.h>
 #include <errno.h>
 #include <err.h>
+#include <limits.h>
 #include <assert.h>
 
+#include <sys/stat.h>
+#include <sys/sendfile.h>
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <sys/uio.h>
@@ -30,12 +34,29 @@ enum http_request {
     REQUEST_URI
 };
 
+/* {{{ IOBUF TEMP */
+struct iobuf {
+    /* should be enough for now, but its a hack */
+    struct iovec iov[100], *v;
+};
+
+static inline void iobuf_init(struct iobuf *buf)
+{
+    *buf = (struct iobuf){ .v = buf->iov };
+}
+
+static inline void iobuf_append(struct iobuf *buf, const char *field, size_t len)
+{
+    *buf->v++ = (struct iovec){ (void *)field,  len };
+}
+
+/* }}} */
+
 struct proxy_request {
     int fd;
     const char *hostname;
 
-    /* should be enough for now, but its a hack */
-    struct iovec iov[100], *v;
+    struct iobuf request;
 };
 
 struct http_data {
@@ -59,16 +80,10 @@ static struct http_parser parser;
 static const struct iovec iov_host  = { "Host: ", sizeof("Host: ") - 1 };
 static const struct iovec iov_crlf  = { "\r\n",   2 };
 
-/* XXX: needs a better name */
-static inline void add_write(struct http_data *data, const char *field, size_t len)
-{
-    *data->p.v++ = (struct iovec){ (void *)field,  len };
-}
-
 static void http_request_method(void *data, const char *at, size_t len)
 {
     struct http_data *header = data;
-    /* add_write(header, at, len + 1); */
+    /* iobuf_append(header, at, len + 1); */
 
     header->method = at;
     header->method_len = len;
@@ -79,47 +94,64 @@ static void http_request_uri(void *data, const char *at, size_t len)
     struct http_data *header = data;
 
     /* *header->p.v++ = (struct iovec){ (void *)at + 2,  len - 2 + 1 }; */
-    header->request_type = REQUEST_URI;
+    if (strncmp(at, "//", 2) == 0) {
+        header->request_type = REQUEST_URI;
+    } else {
+        header->request_type = REQUEST_PATH;
+    }
 
     switch (header->request_type) {
     case REQUEST_URI:
         /* TODO: properly init proxy response */
-        header->p.v = header->p.iov;
+        iobuf_init(&header->p.request);
 
         header->p.hostname = strndup(at + 2, len - 3); /** -3 to avoid the /, parser broken? */
         header->p.fd = connect_to(header->p.hostname, "http");
 
-        add_write(header, header->method, header->method_len + 1);
-        add_write(header, "/ ", 2);
+        iobuf_append(&header->p.request, header->method, header->method_len + 1);
+        iobuf_append(&header->p.request, "/ ", 2);
 
         /* TODO: store the lenght to avoid the strlen later */
         header->path = strndup(at, len);
 
         /* TODO: check if uri or path, this should affect below */
-        /* header->http_version = http_version; */
+        /* header->http_request_version = http_request_version; */
         /* header->http_field   = http_field; */
+        break;
+    case REQUEST_PATH:
+        header->path = strndup(at, len);
+        printf("requesting PATH=%s\n", header->path);
         break;
     default:
         break;
     }
 }
 
-static void http_version(void *data, const char *at, size_t len)
+static void http_request_version(void *data, const char *at, size_t len)
 {
     /* XXX: do we really need to pass this on verbatum? Lets just
      * automatically upgrade to HTTP 1.1 */
     struct http_data *header = data;
-    add_write(header, at, len + 2);
+
+    /* TODO: redo how callbacks are set */
+    if (header->request_type != REQUEST_URI)
+        return;
+
+    iobuf_append(&header->p.request, at, len + 2);
 }
 
 static void http_field(void *data, const char *field, size_t flen, const char *value, size_t vlen)
 {
     struct http_data *header = data;
 
+    /* TODO: redo how callbacks are set */
+    if (header->request_type != REQUEST_URI)
+        return;
+
     if (strncmp("Host", field, flen) == 0) {
-        *header->p.v++ = iov_host;
-        add_write(header, header->p.hostname, strlen(header->p.hostname));
-        *header->p.v++ = iov_crlf;
+        *header->p.request.v++ = iov_host;
+        iobuf_append(&header->p.request, header->p.hostname, strlen(header->p.hostname));
+        *header->p.request.v++ = iov_crlf;
         return;
     } else if (strncmp("If-Modified-Since", field, flen) == 0) {
         header->modified = strndup(value, vlen);
@@ -127,36 +159,76 @@ static void http_field(void *data, const char *field, size_t flen, const char *v
         return;
     }
 
-    add_write(header, field, flen + 2);
-    add_write(header, value, vlen + 2);
+    iobuf_append(&header->p.request, field, flen + 2);
+    iobuf_append(&header->p.request, value, vlen + 2);
 }
 
 /* TODO: this doesn't need any arguments */
 static void http_request_done(void *data, const char UNUSED *at, size_t UNUSED len)
 {
     struct http_data *header = data;
-    *header->p.v++ = iov_crlf;
+
+    /* TODO: redo how callbacks are set */
+    if (header->request_type != REQUEST_URI)
+        return;
+
+    *header->p.request.v++ = iov_crlf;
 }
 /* }}} */
 
-static void handle_proxy_request(struct proxy_request *request, int client_fd)
+static void handle_proxy_request(struct proxy_request *conn, int client_fd)
 {
-    int iovcnt = request->v - request->iov;
+    int iovcnt = conn->request.v - conn->request.iov;
 
-    int target_fd = request->fd;
+    int target_fd = conn->fd;
     if (target_fd <= 0)
         errx(EXIT_FAILURE, "no proxy socket");
 
     printf("SENDING: ");
     fflush(stdout);
-    writev(STDOUT_FILENO, request->iov, iovcnt);
+    writev(STDOUT_FILENO, conn->request.iov, iovcnt);
 
     /* write out header */
-    writev(target_fd, request->iov, iovcnt);
+    writev(target_fd, conn->request.iov, iovcnt);
     shutdown(target_fd, SHUT_WR);
     copydata(target_fd, client_fd);
 
     close(target_fd);
+}
+
+/* XXX: hacktastic but should return a valid file from pacman's cache */
+static void handle_file_request(const char *path, int client_fd)
+{
+    struct iobuf buf;
+    struct stat st;
+    int ret;
+
+    iobuf_init(&buf);
+    iobuf_append(&buf, "HTTP/1.1", 8);
+    iobuf_append(&buf, "200", 3);
+    iobuf_append(&buf, "OK\r\n", 4);
+
+    char filename[PATH_MAX];
+    snprintf(filename, PATH_MAX, "%s/%s", "/var/cache/pacman/pkg", path);
+
+    int fd = open(filename, O_RDONLY);
+    if (fd < 0)
+        err(EXIT_FAILURE, "couldn't access %s", filename);
+
+    fstat(fd, &st);
+
+    /* XXX: cleanup */
+    snprintf(filename, PATH_MAX, "%s: %zd\r\n\r\n", "Content-Length", st.st_size);
+    iobuf_append(&buf, filename, strlen(filename) - 1);
+    int iovcnt = buf.v - buf.iov;
+
+    /* write out header */
+    writev(client_fd, buf.iov, iovcnt);
+    ret = sendfile(client_fd, fd, NULL, st.st_size);
+    if (ret < 0)
+        err(EXIT_FAILURE, "failed to send file %s across socket", filename);
+
+    close(fd);
 }
 
 void handle_request(int client_fd)
@@ -170,7 +242,8 @@ void handle_request(int client_fd)
 
         .request_method = http_request_method,
         .request_uri    = http_request_uri,
-        .http_version   = http_version,
+        .http_version   = http_request_version,
+
         .http_field     = http_field,
         .header_done    = http_request_done
     };
@@ -198,6 +271,7 @@ void handle_request(int client_fd)
         handle_proxy_request(&data.p, client_fd);
         break;
     default:
+        handle_file_request(data.path, client_fd);
         break;
     }
 }
