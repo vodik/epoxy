@@ -210,14 +210,14 @@ static void http_request_done(void *data, const char UNUSED *at, size_t UNUSED l
     if (header->request_type != REQUEST_URI)
         return;
 
+    iobuf_append(&header->p.request, "Connection: Close\r\n", 19);
     iobuf_append(&header->p.request, "\r\n", 2);
 }
 /* }}} */
 
 static void handle_proxy_request(struct proxy_request *conn, int client_fd)
 {
-    int target_fd = conn->fd;
-    if (target_fd <= 0)
+    if (conn->fd <= 0)
         errx(EXIT_FAILURE, "no proxy socket");
 
     printf("SENDING: ");
@@ -225,11 +225,10 @@ static void handle_proxy_request(struct proxy_request *conn, int client_fd)
     iobuf_write(&conn->request, STDOUT_FILENO);
 
     /* write out header */
-    iobuf_write(&conn->request, target_fd);
-    shutdown(target_fd, SHUT_WR);
-    copydata(target_fd, client_fd);
+    iobuf_write(&conn->request, conn->fd);
+    copydata(conn->fd, client_fd);
 
-    close(target_fd);
+    close(conn->fd);
 }
 
 /* XXX: hacktastic but should return a valid file from pacman's cache */
@@ -240,8 +239,8 @@ static void handle_file_request(const char *path, int client_fd)
     int ret;
 
     iobuf_init(&buf, 10);
-    iobuf_append(&buf, "HTTP/1.1", 8);
-    iobuf_append(&buf, "200", 3);
+    iobuf_append(&buf, "HTTP/1.1 ", 9);
+    iobuf_append(&buf, "200 ", 4);
     iobuf_append(&buf, "OK\r\n", 4);
 
     char filename[PATH_MAX];
@@ -254,8 +253,9 @@ static void handle_file_request(const char *path, int client_fd)
     fstat(fd, &st);
 
     /* XXX: cleanup */
-    snprintf(filename, PATH_MAX, "%s: %zd\r\n\r\n", "Content-Length", st.st_size);
+    snprintf(filename, PATH_MAX, "%s: %zd\r\n", "Content-Length", st.st_size);
     iobuf_append(&buf, filename, strlen(filename) - 1);
+    iobuf_append(&buf, "\r\n", 2);
 
     /* write out header */
     iobuf_write(&buf, client_fd);
