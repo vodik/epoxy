@@ -36,20 +36,58 @@ enum http_request {
 
 /* {{{ IOBUF TEMP */
 struct iobuf {
-    /* should be enough for now, but its a hack */
-    struct iovec iov[100], *v;
+    struct iovec *iov;
+    size_t len;
+    size_t size;
+    size_t count;
 };
 
-static inline void iobuf_init(struct iobuf *buf)
+static void iobuf_init(struct iobuf *buf, size_t size)
 {
-    *buf = (struct iobuf){ .v = buf->iov };
+    *buf = (struct iobuf){
+        .iov   = malloc(sizeof(struct iovec) * size),
+        .size  = size,
+        .count = 0,
+        .len   = 0
+    };
 }
 
-static inline void iobuf_append(struct iobuf *buf, const char *field, size_t len)
+static void iobuf_append(struct iobuf *buf, const char *field, size_t len)
 {
-    *buf->v++ = (struct iovec){ (void *)field,  len };
+    if (buf->count == buf->size) {
+        buf->size *= 2;
+        buf->iov = realloc(buf->iov, sizeof(struct iovec) * buf->size);
+    }
+
+    buf->len += len;
+    buf->iov[buf->count++] = (struct iovec){
+        .iov_base = (void *)field,
+        .iov_len  = len
+    };
 }
 
+static ssize_t iobuf_write(struct iobuf *buf, int fd)
+{
+    size_t cur = 0;
+
+    while (true) {
+        ssize_t bytes_w = writev(fd, buf->iov + cur, buf->count - cur);
+        if ((size_t)bytes_w == buf->len || bytes_w < 0)
+            return bytes_w;
+
+        /* handle partial writes */
+        while ((size_t)bytes_w >= buf->iov[cur].iov_len)
+            bytes_w -= buf->iov[cur++].iov_len;
+
+        if (cur == buf->count)
+            break;
+
+        buf->iov[cur].iov_base = (char *)buf->iov[cur].iov_base + bytes_w;
+        buf->iov[cur].iov_len -= bytes_w;
+    }
+    /* TODO: fix return on partial write */
+    return 0;
+}
 /* }}} */
 
 struct proxy_request {
@@ -77,8 +115,8 @@ struct http_data {
 static struct http_parser parser;
 
 /* {{{ CALLBACKS */
-static const struct iovec iov_host  = { "Host: ", sizeof("Host: ") - 1 };
-static const struct iovec iov_crlf  = { "\r\n",   2 };
+/* static const struct iovec iov_host  = { "Host: ", sizeof("Host: ") - 1 }; */
+/* static const struct iovec iov_crlf  = { "\r\n",   2 }; */
 
 static void http_request_method(void *data, const char *at, size_t len)
 {
@@ -103,7 +141,7 @@ static void http_request_uri(void *data, const char *at, size_t len)
     switch (header->request_type) {
     case REQUEST_URI:
         /* TODO: properly init proxy response */
-        iobuf_init(&header->p.request);
+        iobuf_init(&header->p.request, 10);
 
         header->p.hostname = strndup(at + 2, len - 3); /** -3 to avoid the /, parser broken? */
         header->p.fd = connect_to(header->p.hostname, "http");
@@ -149,9 +187,9 @@ static void http_field(void *data, const char *field, size_t flen, const char *v
         return;
 
     if (strncmp("Host", field, flen) == 0) {
-        *header->p.request.v++ = iov_host;
+        iobuf_append(&header->p.request, "Host: ", 6);
         iobuf_append(&header->p.request, header->p.hostname, strlen(header->p.hostname));
-        *header->p.request.v++ = iov_crlf;
+        iobuf_append(&header->p.request, "\r\n", 2);
         return;
     } else if (strncmp("If-Modified-Since", field, flen) == 0) {
         header->modified = strndup(value, vlen);
@@ -172,24 +210,22 @@ static void http_request_done(void *data, const char UNUSED *at, size_t UNUSED l
     if (header->request_type != REQUEST_URI)
         return;
 
-    *header->p.request.v++ = iov_crlf;
+    iobuf_append(&header->p.request, "\r\n", 2);
 }
 /* }}} */
 
 static void handle_proxy_request(struct proxy_request *conn, int client_fd)
 {
-    int iovcnt = conn->request.v - conn->request.iov;
-
     int target_fd = conn->fd;
     if (target_fd <= 0)
         errx(EXIT_FAILURE, "no proxy socket");
 
     printf("SENDING: ");
     fflush(stdout);
-    writev(STDOUT_FILENO, conn->request.iov, iovcnt);
+    iobuf_write(&conn->request, STDOUT_FILENO);
 
     /* write out header */
-    writev(target_fd, conn->request.iov, iovcnt);
+    iobuf_write(&conn->request, target_fd);
     shutdown(target_fd, SHUT_WR);
     copydata(target_fd, client_fd);
 
@@ -203,7 +239,7 @@ static void handle_file_request(const char *path, int client_fd)
     struct stat st;
     int ret;
 
-    iobuf_init(&buf);
+    iobuf_init(&buf, 10);
     iobuf_append(&buf, "HTTP/1.1", 8);
     iobuf_append(&buf, "200", 3);
     iobuf_append(&buf, "OK\r\n", 4);
@@ -220,10 +256,9 @@ static void handle_file_request(const char *path, int client_fd)
     /* XXX: cleanup */
     snprintf(filename, PATH_MAX, "%s: %zd\r\n\r\n", "Content-Length", st.st_size);
     iobuf_append(&buf, filename, strlen(filename) - 1);
-    int iovcnt = buf.v - buf.iov;
 
     /* write out header */
-    writev(client_fd, buf.iov, iovcnt);
+    iobuf_write(&buf, client_fd);
     ret = sendfile(client_fd, fd, NULL, st.st_size);
     if (ret < 0)
         err(EXIT_FAILURE, "failed to send file %s across socket", filename);
