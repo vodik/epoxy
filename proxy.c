@@ -19,8 +19,7 @@
 
 #include "http_parser.h"
 #include "socket.h"
-
-#define UNUSED __attribute__((unused))
+#include "util.h"
 
 /* struct vector { */
 /*     /1* should be enough for now, but its a hack *1/ */
@@ -202,7 +201,7 @@ static void http_field(void *data, const char *field, size_t flen, const char *v
 }
 
 /* TODO: this doesn't need any arguments */
-static void http_request_done(void *data, const char UNUSED *at, size_t UNUSED len)
+static void http_request_done(void *data, const char _unused_ *at, size_t _unused_ len)
 {
     struct http_data *header = data;
 
@@ -243,8 +242,7 @@ static void handle_file_request(const char *path, int client_fd)
     iobuf_append(&buf, "200 ", 4);
     iobuf_append(&buf, "OK\r\n", 4);
 
-    char filename[PATH_MAX];
-    snprintf(filename, PATH_MAX, "%s/%s", "/var/cache/pacman/pkg", path);
+    _cleanup_free_ char *filename = joinpath(".", path, NULL);
 
     int fd = open(filename, O_RDONLY);
     if (fd < 0)

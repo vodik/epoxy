@@ -1,5 +1,4 @@
-#ifndef SOCKET_H
-#define SOCKET_H
+#pragma once
 
 #include <stdint.h>
 
@@ -9,5 +8,3 @@ int accept_connection(int fd);
 
 void copyfile(const char *filename, int out_fd);
 void copydata(int in_fd, int out_fd);
-
-#endif

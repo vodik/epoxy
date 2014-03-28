@@ -21,11 +21,11 @@ static inline int sock_reuseaddr(int sock, int val)
     return setsockopt(sock, SOL_SOCKET, SO_REUSEADDR, &val, sizeof(int));
 }
 
-static inline int sock_nonblock(int sock)
-{
-    int flags = fcntl(sock, F_GETFL, 0);
-    return flags < 0 ? flags : fcntl(sock, F_SETFL, flags | O_NONBLOCK);
-}
+/* static inline int sock_nonblock(int sock) */
+/* { */
+/*     int flags = fcntl(sock, F_GETFL, 0); */
+/*     return flags < 0 ? flags : fcntl(sock, F_SETFL, flags | O_NONBLOCK); */
+/* } */
 
 int connect_to(const char *hostname, const char *service)
 {
