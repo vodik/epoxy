@@ -18,7 +18,7 @@ LDLIBS := \
 	${LDLIBS}
 
 all: epoxy
-epoxy: epoxy.o proxy.o socket.o http_parser.o util.o
+epoxy: epoxy.o proxy.o socket.o iobuf.o http_parser.o util.o
 
 http_parser.c: http_parser.rl
 	ragel -G2 -C $< -o $@

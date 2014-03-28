@@ -252,11 +252,11 @@ static void handle_file_request(const char *path, int client_fd)
 
     /* XXX: cleanup */
     snprintf(filename, PATH_MAX, "%s: %zd\r\n", "Content-Length", st.st_size);
-    iobuf_append(&buf, filename, strlen(filename) - 1);
     iobuf_append(&buf, "\r\n", 2);
 
     /* write out header */
     iobuf_write(&buf, client_fd);
+
     ret = sendfile(client_fd, fd, NULL, st.st_size);
     if (ret < 0)
         err(EXIT_FAILURE, "failed to send file %s across socket", filename);
