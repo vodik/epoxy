@@ -19,6 +19,7 @@
 
 #include "http_parser.h"
 #include "socket.h"
+#include "iobuf.h"
 #include "util.h"
 
 /* struct vector { */
@@ -32,62 +33,6 @@ enum http_request {
     REQUEST_PATH,
     REQUEST_URI
 };
-
-/* {{{ IOBUF TEMP */
-struct iobuf {
-    struct iovec *iov;
-    size_t len;
-    size_t size;
-    size_t count;
-};
-
-static void iobuf_init(struct iobuf *buf, size_t size)
-{
-    *buf = (struct iobuf){
-        .iov   = malloc(sizeof(struct iovec) * size),
-        .size  = size,
-        .count = 0,
-        .len   = 0
-    };
-}
-
-static void iobuf_append(struct iobuf *buf, const char *field, size_t len)
-{
-    if (buf->count == buf->size) {
-        buf->size *= 2;
-        buf->iov = realloc(buf->iov, sizeof(struct iovec) * buf->size);
-    }
-
-    buf->len += len;
-    buf->iov[buf->count++] = (struct iovec){
-        .iov_base = (void *)field,
-        .iov_len  = len
-    };
-}
-
-static ssize_t iobuf_write(struct iobuf *buf, int fd)
-{
-    size_t cur = 0;
-
-    while (true) {
-        ssize_t bytes_w = writev(fd, buf->iov + cur, buf->count - cur);
-        if ((size_t)bytes_w == buf->len || bytes_w < 0)
-            return bytes_w;
-
-        /* handle partial writes */
-        while ((size_t)bytes_w >= buf->iov[cur].iov_len)
-            bytes_w -= buf->iov[cur++].iov_len;
-
-        if (cur == buf->count)
-            break;
-
-        buf->iov[cur].iov_base = (char *)buf->iov[cur].iov_base + bytes_w;
-        buf->iov[cur].iov_len -= bytes_w;
-    }
-    /* TODO: fix return on partial write */
-    return 0;
-}
-/* }}} */
 
 struct proxy_request {
     int fd;
