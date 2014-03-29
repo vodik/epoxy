@@ -209,14 +209,10 @@ static void handle_file_request(const char *path, int client_fd)
     close(fd);
 }
 
-void handle_request(int client_fd)
+static void parse_header(int fd, struct http_data *data)
 {
-    struct http_data data = {
-        .request_type = INVALID_REQUEST
-    };
-
     struct http_callbacks callbacks = {
-        .data = &data,
+        .data = data,
 
         .request_method = http_request_method,
         .request_uri    = http_request_uri,
@@ -232,17 +228,26 @@ void handle_request(int client_fd)
     http_parser_init(&parser);
 
     /* TODO: should be a loop */
-    bytes_r = read(client_fd, buf, BUFSIZ);
+    bytes_r = read(fd, buf, BUFSIZ);
     http_parser_execute(&parser, buf, bytes_r, &callbacks);
     assert(http_parser_is_finished(&parser) && "http header was too big?");
+}
 
-    /* printf("-----------------\n"); */
-    /* printf("Path = %s\n", data.path); */
+void handle_request(int client_fd)
+{
+    struct http_data data = {
+        .request_type = INVALID_REQUEST
+    };
+
+    parse_header(client_fd, &data);
+
+    printf("-----------------\n");
+    printf("Path = %s\n", data.path);
     /* printf("User-Agent = %s\n", data.useragent); */
     /* printf("Host = %s\n", data.host); */
     /* printf("Accept = %s\n", data.accept); */
-    /* printf("If-Modified-Since = %s\n", data.modified); */
-    /* printf("-----------------\n\n"); */
+    printf("If-Modified-Since = %s\n", data.modified);
+    printf("-----------------\n\n");
 
     switch (data.request_type) {
     case REQUEST_URI:
