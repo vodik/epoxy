@@ -241,14 +241,6 @@ void handle_request(int client_fd)
 
     parse_header(client_fd, &data);
 
-    printf("-----------------\n");
-    printf("Path = %s\n", data.path);
-    /* printf("User-Agent = %s\n", data.useragent); */
-    /* printf("Host = %s\n", data.host); */
-    /* printf("Accept = %s\n", data.accept); */
-    printf("If-Modified-Since = %s\n", data.modified);
-    printf("-----------------\n\n");
-
     switch (data.request_type) {
     case REQUEST_URI:
         handle_proxy_request(&data.p, client_fd);
