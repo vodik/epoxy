@@ -188,6 +188,7 @@ static void handle_file_request(const char *path, int client_fd)
     iobuf_append(&buf, "OK\r\n", 4);
 
     _cleanup_free_ char *filename = joinpath(".", path, NULL);
+    _cleanup_free_ char *content_length = NULL;
 
     int fd = open(filename, O_RDONLY);
     if (fd < 0)
@@ -195,8 +196,11 @@ static void handle_file_request(const char *path, int client_fd)
 
     fstat(fd, &st);
 
-    /* XXX: cleanup */
-    snprintf(filename, PATH_MAX, "%s: %zd\r\n", "Content-Length", st.st_size);
+    ssize_t nbytes_w = asprintf(&content_length, "%s: %zd\r\n", "Content-Length", st.st_size);
+    if (nbytes_w < 0)
+        err(1, "failed to allocate memory for Content-Length");
+    iobuf_append(&buf, content_length, nbytes_w);
+
     iobuf_append(&buf, "\r\n", 2);
 
     /* write out header */
