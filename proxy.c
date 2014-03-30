@@ -189,10 +189,9 @@ static void handle_file_request(const char *path, int client_fd)
     _cleanup_free_ char *filename = joinpath(".", path, NULL);
     _cleanup_free_ char *content_length = NULL;
 
-    int fd = open(filename, O_RDONLY);
+    _cleanup_close_ int fd = open(filename, O_RDONLY);
     if (fd < 0)
         err(EXIT_FAILURE, "couldn't access %s", filename);
-
     fstat(fd, &st);
 
     ssize_t nbytes_w = asprintf(&content_length, "%s: %zd\r\n", "Content-Length", st.st_size);
@@ -208,8 +207,6 @@ static void handle_file_request(const char *path, int client_fd)
     ret = sendfile(client_fd, fd, NULL, st.st_size);
     if (ret < 0)
         err(EXIT_FAILURE, "failed to send file %s across socket", filename);
-
-    close(fd);
 }
 
 static void parse_header(int fd, struct http_data *data)
