@@ -22,10 +22,9 @@
 #include "iobuf.h"
 #include "util.h"
 
-/* struct vector { */
-/*     /1* should be enough for now, but its a hack *1/ */
-/*     struct iovec *iov, *v; */
-/*     size_t count; */
+/* struct sock { */
+/*     int fd; */
+/*     char buf[BUFSIZ]; */
 /* }; */
 
 enum http_request {
@@ -227,14 +226,34 @@ static void parse_header(int fd, struct http_data *data)
     };
 
     char buf[BUFSIZ];
-    ssize_t bytes_r;
+    size_t have = 0;
 
     http_parser_init(&parser);
 
-    /* TODO: should be a loop */
-    bytes_r = read(fd, buf, BUFSIZ);
-    http_parser_execute(&parser, buf, bytes_r, &callbacks);
-    assert(http_parser_is_finished(&parser) && "http header was too big?");
+    while (true) {
+        size_t space = sizeof(buf) - have;
+        char *p = &buf[have];
+
+        if (space == 0)
+            errx(1, "out of buffer space");
+
+        ssize_t nbytes_r = read(fd, p, space);
+        if (nbytes_r < 0)
+            err(1, "read failed");
+        else if (nbytes_r == 0)
+            break;
+
+        ssize_t nbytes_p = http_parser_execute(&parser, buf, nbytes_r, &callbacks);
+
+        /* TODO: socket needs to have its own buffering, and if too much
+         * is read, the buffer needs to be reset (memmove) and refilled */
+        if (http_parser_is_finished(&parser))
+            break;
+        else if (nbytes_p < nbytes_r)
+            errx(1, "http request shorter than last read");
+        else
+            errx(1, "http request too big");
+    }
 }
 
 void handle_request(int client_fd)
