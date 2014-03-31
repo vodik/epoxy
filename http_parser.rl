@@ -6,9 +6,11 @@
 #include <ctype.h>
 #include <string.h>
 
-#define LEN(AT, FPC) (FPC - buffer - parser->AT)
-#define MARK(M,FPC) (parser->M = (FPC) - buffer)
-#define PTR_TO(F) (buffer + parser->F)
+#include "util.h"
+
+#define LEN(AT, FPC) (FPC - sock->buf - parser->AT)
+#define MARK(M,FPC) (parser->M = (FPC) - sock->buf)
+#define PTR_TO(F) (sock->buf + parser->F)
 
 /** Machine **/
 %%{
@@ -59,10 +61,10 @@
     }
 
     action done {
-        parser->body_start = fpc - buffer + 1;
+        parser->body_start = fpc - sock->buf + 1;
 
         if(cbs->header_done != NULL)
-            cbs->header_done(cbs->data, fpc + 1, pe - fpc - 1);
+            cbs->header_done(cbs->data, fpc + 1, sock->pe - fpc - 1);
         fbreak;
     }
 
@@ -184,65 +186,67 @@
 /** Data **/
 %% write data;
 
-void http_parser_init(struct http_parser *parser)
+void http_parser_init(struct http_parser *parser, struct sock *sock)
 {
-    int cs = 0;
+    %%access sock->;
+    %%variable p sock->p;
+    %%variable pe sock->pe;
+    %%write init;
 
-    %% write init;
-
-    *parser = (struct http_parser){
-        .cs  = cs,
-    };
+    zero(parser, sizeof(struct http_parser));
 }
 
 /** exec **/
-size_t http_parser_execute(struct http_parser *parser, const char *buffer, size_t len, struct http_callbacks *cbs)
+size_t http_parser_execute(struct http_parser *parser, struct sock *sock, struct http_callbacks *cbs)
 {
-    if (len == 0)
+    if (sock->len == 0)
         return 0;
 
-    const char *p, *pe;
-    int cs = parser->cs;
+    /* const char *p, *pe; */
+    /* int cs = parser->cs; */
 
-    p = buffer;
-    pe = buffer + len;
+    /* p = sock->buf; */
+    /* pe = sock->buf + len; */
 
-    %% write exec;
+    %%access sock->;
+    %%variable p sock->p;
+    %%variable pe sock->pe;
+    %%write exec;
 
-    assert(p <= pe && "Buffer overflow after parsing.");
+    assert(sock->p <= sock->pe && "Buffer overflow after parsing.");
 
-    if (!http_parser_has_error(parser)) {
-        parser->cs = cs;
-    }
+    /* if (!http_parser_has_error(parser)) { */
+    /*     sock->cs = cs; */
+    /* } */
 
-    parser->nread += p - buffer;
+    parser->nread += sock->p - sock->buf;
 
-    assert(parser->nread <= len && "nread longer than length");
-    assert(parser->body_start <= len && "body starts after buffer end");
-    assert(parser->mark < len && "mark is after buffer end");
-    assert(parser->field_len <= len && "field has length longer than whole buffer");
-    assert(parser->field_start < len && "field starts after buffer end");
+    assert(parser->nread <= sock->len && "nread longer than length");
+    assert(parser->body_start <= sock->len && "body starts after sock->buf end");
+    assert(parser->mark < sock->len && "mark is after sock->buf end");
+    assert(parser->field_len <= sock->len && "field has length longer than whole sock->buf");
+    assert(parser->field_start < sock->len && "field starts after sock->buf end");
 
     return parser->nread;
 }
 
-int http_parser_finish(struct http_parser *parser)
+int http_parser_finish(struct sock *sock)
 {
-    if (http_parser_has_error(parser) ) {
+    if (http_parser_has_error(sock)) {
         return -1;
-    } else if (http_parser_is_finished(parser) ) {
+    } else if (http_parser_is_finished(sock) ) {
         return 1;
     } else {
         return 0;
     }
 }
 
-int http_parser_has_error(struct http_parser *parser)
+int http_parser_has_error(struct sock *sock)
 {
-    return parser->cs == http_parser_error;
+    return sock->cs == http_parser_error;
 }
 
-int http_parser_is_finished(struct http_parser *parser)
+int http_parser_is_finished(struct sock *sock)
 {
-    return parser->cs >= http_parser_first_final;
+    return sock->cs >= http_parser_first_final;
 }

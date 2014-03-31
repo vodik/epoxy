@@ -2,6 +2,7 @@
 #define http11_parser_h
 
 #include <sys/types.h>
+#include "socket.h"
 
 typedef void (*element_cb)(void *data, const char *at, size_t length);
 typedef void (*field_cb)(void *data, const char *field, size_t flen, const char *value, size_t vlen);
@@ -20,7 +21,6 @@ struct http_callbacks {
 };
 
 struct http_parser {
-    int cs;
     size_t body_start;
     int content_len;
     size_t nread;
@@ -32,11 +32,11 @@ struct http_parser {
     struct http_parser_cbs *cbs;
 };
 
-void http_parser_init(struct http_parser *parser);
-int http_parser_finish(struct http_parser *parser);
-size_t http_parser_execute(struct http_parser *parser, const char *buffer, size_t len, struct http_callbacks *cbs);
-int http_parser_has_error(struct http_parser *parser);
-int http_parser_is_finished(struct http_parser *parser);
+void http_parser_init(struct http_parser *parser, struct sock *sock);
+size_t http_parser_execute(struct http_parser *parser, struct sock *sock, struct http_callbacks *cbs);
+int http_parser_finish(struct sock *sock);
+int http_parser_has_error(struct sock *sock);
+int http_parser_is_finished(struct sock *sock);
 
 #define http_parser_nread(parser) (parser)->nread
 

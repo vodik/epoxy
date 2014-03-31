@@ -22,11 +22,6 @@
 #include "iobuf.h"
 #include "util.h"
 
-/* struct sock { */
-/*     int fd; */
-/*     char buf[BUFSIZ]; */
-/* }; */
-
 enum http_request {
     INVALID_REQUEST = 0,
     REQUEST_PATH,
@@ -57,10 +52,32 @@ struct http_data {
 
 static struct http_parser parser;
 
-/* {{{ CALLBACKS */
-/* static const struct iovec iov_host  = { "Host: ", sizeof("Host: ") - 1 }; */
-/* static const struct iovec iov_crlf  = { "\r\n",   2 }; */
+/* {{{ SOCKETS */
+static ssize_t refill_buffer(struct sock *sock)
+{
+    size_t have = sock->len - sock->pos;
+    size_t space = sizeof(sock->buf) - have;
 
+    if (space == 0)
+        errx(1, "out of buffer space");
+    if (have)
+        memmove(sock->buf, &sock->buf[sock->pos], have);
+
+    ssize_t nbytes_r = read(sock->fd, &sock->buf[have], space);
+    if (nbytes_r < 0)
+        return -errno;
+
+    sock->len = have + nbytes_r;
+    sock->pos = 0;
+    sock->buf[sock->len] = 0;
+
+    sock->p = sock->buf;
+    sock->pe = sock->buf + sock->len;
+    return nbytes_r;
+}
+/* }}} */
+
+/* {{{ CALLBACKS */
 static void http_request_method(void *data, const char *at, size_t len)
 {
     struct http_data *header = data;
@@ -222,35 +239,16 @@ static void parse_header(int fd, struct http_data *data)
         .header_done    = http_request_done
     };
 
-    char buf[BUFSIZ];
-    size_t have = 0;
+    struct sock sock = { .fd = fd };
+    http_parser_init(&parser, &sock);
 
-    http_parser_init(&parser);
+    do {
+        refill_buffer(&sock);
 
-    while (true) {
-        size_t space = sizeof(buf) - have;
-        char *p = &buf[have];
-
-        if (space == 0)
-            errx(1, "out of buffer space");
-
-        ssize_t nbytes_r = read(fd, p, space);
-        if (nbytes_r < 0)
-            err(1, "read failed");
-        else if (nbytes_r == 0)
-            break;
-
-        ssize_t nbytes_p = http_parser_execute(&parser, buf, nbytes_r, &callbacks);
-
-        /* TODO: socket needs to have its own buffering, and if too much
-         * is read, the buffer needs to be reset (memmove) and refilled */
-        if (http_parser_is_finished(&parser))
-            break;
-        else if (nbytes_p < nbytes_r)
-            errx(1, "http request shorter than last read");
-        else
-            errx(1, "http request too big");
-    }
+        /* TODO: parser and sock object should be rolled together */
+        ssize_t nbytes_p = http_parser_execute(&parser, &sock, &callbacks);
+        sock.pos += nbytes_p;
+    } while (!http_parser_is_finished(&sock));
 }
 
 void handle_request(int client_fd)
